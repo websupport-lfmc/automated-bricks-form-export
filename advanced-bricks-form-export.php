@@ -61,14 +61,16 @@ function fetch_bricks_data($limit = false)
             $forms_data[$form_id] = [];
         }
 
+        // Initialize the entry data array with the standard fields
         $entry_data = [
             'entry_id' => $entry['id'],
             'submission_date' => $entry['created_at'],
-            'form_data' => []
         ];
 
-        foreach ($form_data as $field_id => $field_info) {
-            $entry_data['form_data'][$field_id] = isset($field_info['value']) ? $field_info['value'] : '';
+        // Iterate over each form field and add it to the entry data
+        foreach ($form_data as $field_key => $field_info) {
+            $field_value = is_array($field_info) && isset($field_info['value']) ? $field_info['value'] : '';
+            $entry_data[$field_key] = $field_value;
         }
 
         $forms_data[$form_id][] = $entry_data;
