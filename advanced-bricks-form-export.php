@@ -2,7 +2,7 @@
 /*
 Plugin Name: Automated Bricks Form Export
 Description: Automates the export of Bricks Builder form submissions to CSV and emails them on a scheduled basis.
-Version: 1.0.1
+Version: 1.0.2
 Author: LFMC
 */
 
