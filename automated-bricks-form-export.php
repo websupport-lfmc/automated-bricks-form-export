@@ -2,7 +2,7 @@
 /*
 Plugin Name: Automated Bricks Form Export
 Description: Automates the export of Bricks Builder form submissions to CSV and emails them on a scheduled basis.
-Version: 1.0.5
+Version: 1.0.6
 Author: LFMC
 */
 
@@ -38,12 +38,36 @@ function log_bricks_export($message)
 // Function to fetch Bricks form titles
 function get_bricks_form_title($form_id)
 {
-    return \Bricks\Integrations\Form\Submission_Database::get_form_name_by_id($form_id);
+    log_bricks_export("Fetching form title for form ID: $form_id");
+    $form_title = \Bricks\Integrations\Form\Submission_Database::get_form_name_by_id($form_id);
+    log_bricks_export("Form title retrieved: $form_title");
+    return $form_title;
 }
 
-// Function to fetch and link data from the Bricks database
-function fetch_bricks_data($form_id = '', $limit = false)
+// Function to fetch Bricks form field labels
+function get_bricks_form_field_labels($post_id, $form_id)
 {
+    $form_settings = \Bricks\Integrations\Form\Submission_Database::get_form_settings($post_id, $form_id);
+    $field_labels = [];
+
+    if (!empty($form_settings['fields'])) {
+        foreach ($form_settings['fields'] as $field) {
+            $field_id = isset($field['id']) ? $field['id'] : '';
+            $field_label = isset($field['label']) ? $field['label'] : $field_id;
+            if ($field_id) {
+                $field_labels[$field_id] = $field_label;
+            }
+        }
+    }
+
+    return $field_labels;
+}
+
+// Function to fetch Bricks data by form ID
+function fetch_bricks_data($form_id, $limit = false)
+{
+    log_bricks_export("Fetching data for form ID: $form_id with limit: " . ($limit ? $limit : 'no limit'));
+
     $forms_data = [];
     $args = [
         'form_id'  => $form_id,
@@ -55,65 +79,82 @@ function fetch_bricks_data($form_id = '', $limit = false)
         $args['limit'] = $limit;
     }
 
+    log_bricks_export("Querying the database with arguments: " . print_r($args, true));
     $entries = \Bricks\Integrations\Form\Submission_Database::get_entries($args);
+
+    if (empty($entries)) {
+        log_bricks_export("No entries found for form ID: $form_id");
+        return $forms_data;
+    }
+
+    log_bricks_export("Number of entries found: " . count($entries));
+
+    // Fetch the field labels using the first entry's post_id (assuming all entries belong to the same form setup)
+    $first_entry = reset($entries);
+    $post_id = $first_entry['post_id']; // Assuming 'post_id' is available in your entries
+    $field_labels = get_bricks_form_field_labels($post_id, $form_id);
 
     foreach ($entries as $entry) {
         $form_data = json_decode($entry['form_data'], true);
+        log_bricks_export("Processing entry ID: " . $entry['id'] . ", Form Data: " . print_r($form_data, true));
 
         $entry_data = [
-            'entry_id' => $entry['id'],
-            'submission_date' => $entry['created_at'],
-            'browser' => $entry['browser'],
-            'ip' => $entry['ip'],
-            'os' => $entry['os'],
-            'referrer' => $entry['referrer'],
-            'user_id' => $entry['user_id'],
+            'Entry ID' => $entry['id'],
+            'Submission Date' => $entry['created_at'],
+            'Browser' => $entry['browser'],
+            'IP Address' => $entry['ip'],
+            'OS' => $entry['os'],
+            'Referrer' => $entry['referrer'],
+            'User ID' => $entry['user_id'],
         ];
 
         if (is_array($form_data)) {
             foreach ($form_data as $field_key => $field_info) {
-                $field_value = $field_info['value'] ?? '';
-                $entry_data[$field_key] = is_array($field_value) ? implode(', ', $field_value) : $field_value;
+                $field_label = isset($field_labels[$field_key]) ? $field_labels[$field_key] : $field_key;
+                $field_value = isset($field_info['value']) ? $field_info['value'] : '';
+                $entry_data[$field_label] = is_array($field_value) ? implode(', ', $field_value) : $field_value;
             }
         }
 
         $forms_data[] = $entry_data;
     }
 
+    log_bricks_export("Finished processing entries for form ID: $form_id");
     return $forms_data;
 }
 
-// Function to export Bricks data to CSV
-function export_bricks_data_to_csv($form_id = '', $limit = false)
+// Function to export Bricks data to CSV with correct headers
+function export_bricks_data_to_csv($form_id, $count, $limit = false)
 {
+    log_bricks_export("Exporting data to CSV for form ID: $form_id with limit: " . ($limit ? $limit : 'no limit'));
     $entries = fetch_bricks_data($form_id, $limit);
     if (empty($entries)) {
+        log_bricks_export("No entries to export for form ID: $form_id");
         return false;
     }
 
-    $form_title = \Bricks\Integrations\Form\Submission_Database::get_form_name_by_id($form_id);
-    $csv_file = plugin_dir_path(__FILE__) . "bricks_submissions_{$form_title}.csv";
+    $form_title = get_bricks_form_title($form_id);
+    $csv_file = plugin_dir_path(__FILE__) . "bricks_submissions_{$form_title}_{$count}.csv";  // Use the count in the filename
     $file_handle = fopen($csv_file, 'w');
 
-    // Get unique headers from entries
-    $headers = ['Entry ID', 'Submission Date', 'Browser', 'IP Address', 'OS', 'Referrer', 'User ID'];
-    foreach ($entries as $entry) {
-        $entry_headers = array_keys($entry);
-        $headers = array_unique(array_merge($headers, $entry_headers));
-    }
+    // Prepare headers from the first entry
+    $headers = array_keys($entries[0]);
 
+    // Write the CSV headers
     fputcsv($file_handle, $headers);
 
+    // Write the data
     foreach ($entries as $entry) {
         $row = [];
         foreach ($headers as $header) {
-            $row[] = $entry[$header] ?? '';
+            $row[] = $entry[$header] ?? '';  // Use the header to map the data correctly
         }
         fputcsv($file_handle, $row);
     }
 
     fclose($file_handle);
 
+    log_bricks_export("CSV file created: $csv_file");
     return $csv_file;
 }
 
@@ -122,7 +163,7 @@ function send_bricks_email($limit = false)
 {
     log_bricks_export("Bricks email event triggered.");
 
-    $options = get_option('bricks_form_export_options'); // Reusing the same option name for simplicity
+    $options = get_option('bricks_form_export_options');
     $to = isset($options['export_emails']) ? $options['export_emails'] : '';
     if (empty($to)) {
         log_bricks_export("No email address provided for Bricks export.");
@@ -134,17 +175,33 @@ function send_bricks_email($limit = false)
     $subject = ucfirst($frequency) . " Form Submissions for $site_name";
     $body = "Here's a $frequency update on the form submissions for $site_name:<br><br>";
 
-    // Fetch form data and generate table
-    $forms_data = fetch_bricks_data($limit);
+    log_bricks_export("Fetching form data to include in the email.");
+    $available_form_ids = get_available_form_ids();
+    if (empty($available_form_ids)) {
+        log_bricks_export("No forms found to include in the email.");
+        return;
+    }
+
+    $total_submissions = 0;
     $body .= "<table border='1' cellpadding='5' cellspacing='0' style='text-align: left;'>";
     $body .= "<tr><th style='text-align: left;'>Form Name</th><th style='text-align: left;'>Number of " . ucfirst($frequency) . " Submissions</th></tr>";
 
-    $total_submissions = 0;
-    foreach ($forms_data as $form_id => $entries) {
+    $attachments = [];
+    $count = 1;  // Initialize the counter
+
+    foreach ($available_form_ids as $form_id) {
+        $entries = fetch_bricks_data($form_id, $limit);
         $form_title = get_bricks_form_title($form_id);
         $form_submissions = count($entries);
         $total_submissions += $form_submissions;
         $body .= "<tr><td style='text-align: left;'>$form_title</td><td style='text-align: left;'>$form_submissions</td></tr>";
+
+        // Generate CSV for each form with the count appended
+        $attachment = export_bricks_data_to_csv($form_id, $count, $limit);
+        if ($attachment) {
+            $attachments[] = $attachment;
+        }
+        $count++;  // Increment the counter
     }
 
     $body .= "<tr><th style='text-align: left;'>Total $frequency Submissions (All Forms)</th><th style='text-align: left;'>$total_submissions</th></tr>";
@@ -153,10 +210,18 @@ function send_bricks_email($limit = false)
     $test_email = isset($options['test_email']) ? $options['test_email'] : '';
     $body .= "For further information about the export, please reach out to $test_email.";
     $headers = array('Content-Type: text/html; charset=UTF-8');
-    $attachments = export_bricks_data_to_csv($limit);
 
-    log_bricks_export("Sending email to: $to");
+    log_bricks_export("Sending email to: $to with attachments: " . implode(', ', $attachments));
     wp_mail($to, $subject, $body, $headers, $attachments);
+}
+
+// Fetches available form IDs from the database
+function get_available_form_ids() {
+    global $wpdb;
+    $table_name = \Bricks\Integrations\Form\Submission_Database::get_table_name();
+    $query = "SELECT DISTINCT form_id FROM {$table_name}";
+    $results = $wpdb->get_col($query);
+    return $results;
 }
 
 // Hook the scheduled event to the send_bricks_email function
@@ -165,7 +230,7 @@ add_action('send_bricks_email_event', 'send_bricks_email');
 // Schedule the email function
 function schedule_bricks_email_event()
 {
-    $options = get_option('bricks_form_export_options'); // Reusing the same option name for simplicity
+    $options = get_option('bricks_form_export_options');
     $frequency = isset($options['schedule_frequency']) ? $options['schedule_frequency'] : 'monthly';
     $emails = isset($options['export_emails']) ? $options['export_emails'] : '';
 
@@ -243,23 +308,23 @@ function bricks_export_options_page()
         'Automated Bricks Form Export',
         'Bricks Export',
         'manage_options',
-        'bricks_form_export', // Reusing the same slug for simplicity
+        'bricks_form_export',
         'bricks_export_options_page_html',
         'dashicons-email-alt',
         30
     );
 
     add_submenu_page(
-        'bricks_form_export', // Reusing the same slug for simplicity
+        'bricks_form_export',
         'Bricks Export Settings',
         'Bricks Export Settings',
         'manage_options',
-        'bricks_form_export', // Reusing the same slug for simplicity
+        'bricks_form_export',
         'bricks_export_options_page_html'
     );
 
     add_submenu_page(
-        'bricks_form_export', // Reusing the same slug for simplicity
+        'bricks_form_export',
         'Bricks Export Test Email',
         'Bricks Export Test Email',
         'manage_options',
@@ -296,11 +361,10 @@ function bricks_export_options_page_html()
         <h1>Automated Bricks Form Export Settings</h1>
         <?php if ($message) echo $message; ?>
 
-        <!-- Form for updating settings -->
         <form method="post" action="options.php" id="bricks_form_export_settings_form">
             <?php
-            settings_fields('bricks_form_export_options_group'); // Reusing the same group for simplicity
-            $options = get_option('bricks_form_export_options'); // Reusing the same option for simplicity
+            settings_fields('bricks_form_export_options_group');
+            $options = get_option('bricks_form_export_options');
             ?>
             <table class="form-table">
                 <tr valign="top">
@@ -308,7 +372,7 @@ function bricks_export_options_page_html()
                     <td><input type="text" name="bricks_form_export_options[export_emails]" value="<?php echo isset($options['export_emails']) ? esc_attr($options['export_emails']) : ''; ?>" /></td>
                 </tr>
                 <tr valign="top">
-                    <th scope="row">Admin &amp; Test Email Address</th>
+                    <th scope="row">Admin & Test Email Address</th>
                     <td><input type="text" name="bricks_form_export_options[test_email]" value="<?php echo isset($options['test_email']) ? esc_attr($options['test_email']) : ''; ?>" /></td>
                 </tr>
                 <tr valign="top">
@@ -331,7 +395,6 @@ function bricks_export_options_page_html()
             </p>
         </form>
 
-        <!-- Form to start/stop schedule sending -->
         <form method="post" action="">
             <h2>Schedule Sending</h2>
             <p>Use the button below to start or stop scheduled sending of Bricks submissions.</p>
@@ -340,7 +403,6 @@ function bricks_export_options_page_html()
             </p>
         </form>
 
-        <!-- Form to clear all options -->
         <form method="post" action="" onsubmit="return confirm('Are you sure you want to clear all options?');">
             <h2>Clear All Options</h2>
             <p>Use the button below to clear all options. This action cannot be undone.</p>
@@ -370,7 +432,7 @@ function bricks_export_options_page_html()
 // Add test email button in admin interface
 function test_email_button_callback()
 {
-    $options = get_option('bricks_form_export_options'); // Reusing the same option for simplicity
+    $options = get_option('bricks_form_export_options');
     $test_email = isset($options['test_email']) ? $options['test_email'] : '';
     $test_limit = isset($options['test_limit']) ? $options['test_limit'] : 1;
 
