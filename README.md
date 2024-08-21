@@ -47,12 +47,6 @@ The Automated Bricks Form Export plugin simplifies the handling of Bricks Builde
 
 This plugin includes automatic update functionality using the [GitHub Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker). Keep your plugin up to date with the latest features and fixes effortlessly.
 
-## Changelog
-
-### 1.0.0
-- Initial release with Bricks Builder form export functionality.
-- Integrated support for automatic updates using GitHub Updater.
-
 ## License
 
 Automated Bricks Form Export is licensed under the GNU General Public License v3.0. You may obtain a copy of the License in the plugin folder. 
