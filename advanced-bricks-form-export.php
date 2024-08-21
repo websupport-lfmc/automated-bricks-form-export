@@ -2,7 +2,7 @@
 /*
 Plugin Name: Automated Bricks Form Export
 Description: Automates the export of Bricks Builder form submissions to CSV and emails them on a scheduled basis.
-Version: 1.0.3
+Version: 1.0.4
 Author: LFMC
 */
 
@@ -51,6 +51,7 @@ function fetch_bricks_data($limit = false)
         $args['limit'] = $limit;
     }
 
+    // Get entries using the built-in Bricks method
     $entries = \Bricks\Integrations\Form\Submission_Database::get_entries($args);
 
     foreach ($entries as $entry) {
@@ -58,23 +59,26 @@ function fetch_bricks_data($limit = false)
         $form_data = json_decode($entry['form_data'], true);
 
         if (!isset($forms_data[$form_id])) {
-            $forms_data[$form_id] = [];
+            $forms_data[$form_id] = [
+                'form_name' => \Bricks\Integrations\Form\Submission_Database::get_form_name_by_id($form_id),
+                'entries' => [],
+            ];
         }
 
-        // Ensure all fields are retrieved properly
         $entry_data = [
             'entry_id' => $entry['id'],
             'submission_date' => $entry['created_at'],
         ];
 
+        // Process each field in form_data
         if (is_array($form_data)) {
             foreach ($form_data as $field_key => $field_info) {
-                $field_value = is_array($field_info) && isset($field_info['value']) ? $field_info['value'] : '';
-                $entry_data[$field_key] = $field_value;
+                $field_value = isset($field_info['value']) ? $field_info['value'] : '';
+                $entry_data[$field_key] = is_array($field_value) ? implode(', ', $field_value) : $field_value;
             }
         }
 
-        $forms_data[$form_id][] = $entry_data;
+        $forms_data[$form_id]['entries'][] = $entry_data;
     }
 
     return $forms_data;
@@ -86,36 +90,28 @@ function export_bricks_data_to_csv($limit = false)
     $forms_data = fetch_bricks_data($limit);
     $csv_files = [];
 
-    foreach ($forms_data as $form_id => $entries) {
-        $form_title = get_bricks_form_title($form_id);
-        $csv_file = plugin_dir_path(__FILE__) . "bricks_submissions_{$form_title}.csv";
+    foreach ($forms_data as $form_id => $form_data) {
+        $form_name = $form_data['form_name'];
+        $csv_file = plugin_dir_path(__FILE__) . "bricks_submissions_{$form_name}.csv";
         $file_handle = fopen($csv_file, 'w');
 
-        // Collect all unique field names
+        // Collect all unique field names across entries
         $unique_field_names = [];
-        foreach ($entries as $entry) {
-            foreach ($entry as $field_name => $field_value) {
-                if (!in_array($field_name, $unique_field_names) && $field_name !== 'entry_id' && $field_name !== 'submission_date') {
-                    $unique_field_names[] = $field_name;
-                }
-            }
+        foreach ($form_data['entries'] as $entry) {
+            $unique_field_names = array_merge($unique_field_names, array_keys($entry));
         }
+        $unique_field_names = array_unique($unique_field_names);
         sort($unique_field_names);
 
-        // Add CSV header
-        $headers = array_merge(['Entry ID', 'Submission Date'], $unique_field_names);
-        fputcsv($file_handle, $headers);
+        // Write CSV headers
+        fputcsv($file_handle, $unique_field_names);
 
-        // Add data rows
-        foreach ($entries as $entry) {
-            $row = array_fill_keys($headers, '');
-            $row['Entry ID'] = $entry['entry_id'];
-            $row['Submission Date'] = $entry['submission_date'];
-
+        // Write each entry's data to CSV
+        foreach ($form_data['entries'] as $entry) {
+            $row = [];
             foreach ($unique_field_names as $field_name) {
-                $row[$field_name] = $entry[$field_name];
+                $row[] = isset($entry[$field_name]) ? $entry[$field_name] : '';
             }
-
             fputcsv($file_handle, $row);
         }
 
