@@ -42,84 +42,79 @@ function get_bricks_form_title($form_id)
 }
 
 // Function to fetch and link data from the Bricks database
-function fetch_bricks_data($limit = false)
+function fetch_bricks_data($form_id = '', $limit = false)
 {
     $forms_data = [];
-    $args = [];
+    $args = [
+        'form_id'  => $form_id,
+        'order_by' => 'id',
+        'order'    => 'DESC',
+    ];
 
     if ($limit) {
         $args['limit'] = $limit;
     }
 
-    // Get entries using the built-in Bricks method
     $entries = \Bricks\Integrations\Form\Submission_Database::get_entries($args);
 
     foreach ($entries as $entry) {
-        $form_id = $entry['form_id'];
         $form_data = json_decode($entry['form_data'], true);
-
-        if (!isset($forms_data[$form_id])) {
-            $forms_data[$form_id] = [
-                'form_name' => \Bricks\Integrations\Form\Submission_Database::get_form_name_by_id($form_id),
-                'entries' => [],
-            ];
-        }
 
         $entry_data = [
             'entry_id' => $entry['id'],
             'submission_date' => $entry['created_at'],
+            'browser' => $entry['browser'],
+            'ip' => $entry['ip'],
+            'os' => $entry['os'],
+            'referrer' => $entry['referrer'],
+            'user_id' => $entry['user_id'],
         ];
 
-        // Process each field in form_data
         if (is_array($form_data)) {
             foreach ($form_data as $field_key => $field_info) {
-                $field_value = isset($field_info['value']) ? $field_info['value'] : '';
+                $field_value = $field_info['value'] ?? '';
                 $entry_data[$field_key] = is_array($field_value) ? implode(', ', $field_value) : $field_value;
             }
         }
 
-        $forms_data[$form_id]['entries'][] = $entry_data;
+        $forms_data[] = $entry_data;
     }
 
     return $forms_data;
 }
 
 // Function to export Bricks data to CSV
-function export_bricks_data_to_csv($limit = false)
+function export_bricks_data_to_csv($form_id = '', $limit = false)
 {
-    $forms_data = fetch_bricks_data($limit);
-    $csv_files = [];
-
-    foreach ($forms_data as $form_id => $form_data) {
-        $form_name = $form_data['form_name'];
-        $csv_file = plugin_dir_path(__FILE__) . "bricks_submissions_{$form_name}.csv";
-        $file_handle = fopen($csv_file, 'w');
-
-        // Collect all unique field names across entries
-        $unique_field_names = [];
-        foreach ($form_data['entries'] as $entry) {
-            $unique_field_names = array_merge($unique_field_names, array_keys($entry));
-        }
-        $unique_field_names = array_unique($unique_field_names);
-        sort($unique_field_names);
-
-        // Write CSV headers
-        fputcsv($file_handle, $unique_field_names);
-
-        // Write each entry's data to CSV
-        foreach ($form_data['entries'] as $entry) {
-            $row = [];
-            foreach ($unique_field_names as $field_name) {
-                $row[] = isset($entry[$field_name]) ? $entry[$field_name] : '';
-            }
-            fputcsv($file_handle, $row);
-        }
-
-        fclose($file_handle);
-        $csv_files[] = $csv_file;
+    $entries = fetch_bricks_data($form_id, $limit);
+    if (empty($entries)) {
+        return false;
     }
 
-    return $csv_files;
+    $form_title = \Bricks\Integrations\Form\Submission_Database::get_form_name_by_id($form_id);
+    $csv_file = plugin_dir_path(__FILE__) . "bricks_submissions_{$form_title}.csv";
+    $file_handle = fopen($csv_file, 'w');
+
+    // Get unique headers from entries
+    $headers = ['Entry ID', 'Submission Date', 'Browser', 'IP Address', 'OS', 'Referrer', 'User ID'];
+    foreach ($entries as $entry) {
+        $entry_headers = array_keys($entry);
+        $headers = array_unique(array_merge($headers, $entry_headers));
+    }
+
+    fputcsv($file_handle, $headers);
+
+    foreach ($entries as $entry) {
+        $row = [];
+        foreach ($headers as $header) {
+            $row[] = $entry[$header] ?? '';
+        }
+        fputcsv($file_handle, $row);
+    }
+
+    fclose($file_handle);
+
+    return $csv_file;
 }
 
 // Function to send email with Bricks CSV attachment
