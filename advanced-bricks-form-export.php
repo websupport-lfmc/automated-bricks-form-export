@@ -2,7 +2,7 @@
 /*
 Plugin Name: Automated Bricks Form Export
 Description: Automates the export of Bricks Builder form submissions to CSV and emails them on a scheduled basis.
-Version: 1.0.2
+Version: 1.0.3
 Author: LFMC
 */
 
@@ -61,16 +61,17 @@ function fetch_bricks_data($limit = false)
             $forms_data[$form_id] = [];
         }
 
-        // Initialize the entry data array with the standard fields
+        // Ensure all fields are retrieved properly
         $entry_data = [
             'entry_id' => $entry['id'],
             'submission_date' => $entry['created_at'],
         ];
 
-        // Iterate over each form field and add it to the entry data
-        foreach ($form_data as $field_key => $field_info) {
-            $field_value = is_array($field_info) && isset($field_info['value']) ? $field_info['value'] : '';
-            $entry_data[$field_key] = $field_value;
+        if (is_array($form_data)) {
+            foreach ($form_data as $field_key => $field_info) {
+                $field_value = is_array($field_info) && isset($field_info['value']) ? $field_info['value'] : '';
+                $entry_data[$field_key] = $field_value;
+            }
         }
 
         $forms_data[$form_id][] = $entry_data;
@@ -93,8 +94,8 @@ function export_bricks_data_to_csv($limit = false)
         // Collect all unique field names
         $unique_field_names = [];
         foreach ($entries as $entry) {
-            foreach ($entry['form_data'] as $field_name => $field_data) {
-                if (!in_array($field_name, $unique_field_names)) {
+            foreach ($entry as $field_name => $field_value) {
+                if (!in_array($field_name, $unique_field_names) && $field_name !== 'entry_id' && $field_name !== 'submission_date') {
                     $unique_field_names[] = $field_name;
                 }
             }
@@ -111,8 +112,8 @@ function export_bricks_data_to_csv($limit = false)
             $row['Entry ID'] = $entry['entry_id'];
             $row['Submission Date'] = $entry['submission_date'];
 
-            foreach ($entry['form_data'] as $field_name => $field_data) {
-                $row[$field_name] = $field_data['value'];
+            foreach ($unique_field_names as $field_name) {
+                $row[$field_name] = $entry[$field_name];
             }
 
             fputcsv($file_handle, $row);
