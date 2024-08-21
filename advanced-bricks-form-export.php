@@ -2,7 +2,7 @@
 /*
 Plugin Name: Automated Bricks Form Export
 Description: Automates the export of Bricks Builder form submissions to CSV and emails them on a scheduled basis.
-Version: 1.0.0
+Version: 1.0.1
 Author: LFMC
 */
 
@@ -61,11 +61,17 @@ function fetch_bricks_data($limit = false)
             $forms_data[$form_id] = [];
         }
 
-        $forms_data[$form_id][] = [
+        $entry_data = [
             'entry_id' => $entry['id'],
             'submission_date' => $entry['created_at'],
-            'form_data' => $form_data,
+            'form_data' => []
         ];
+
+        foreach ($form_data as $field_id => $field_info) {
+            $entry_data['form_data'][$field_id] = isset($field_info['value']) ? $field_info['value'] : '';
+        }
+
+        $forms_data[$form_id][] = $entry_data;
     }
 
     return $forms_data;
