@@ -2,7 +2,7 @@
 /*
 Plugin Name: Automated Bricks Form Export
 Description: Automates the export of Bricks Builder form submissions to CSV and emails them on a scheduled basis.
-Version: 1.0.10
+Version: 1.0.11
 Author: LFMC
 */
 
@@ -263,8 +263,6 @@ function clear_bricks_email_schedule()
         wp_unschedule_event($timestamp, 'send_bricks_email_event');
     }
 }
-
-add_action('wp', 'schedule_bricks_email_event');
 
 // Register settings
 function bricks_export_register_settings()
