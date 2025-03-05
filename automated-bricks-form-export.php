@@ -2,7 +2,7 @@
 /*
 Plugin Name: Automated Bricks Form Export
 Description: Automates the export of Bricks Builder form submissions to CSV and emails them on a scheduled basis.
-Version: 1.0.11
+Version: 1.0.12
 Author: LFMC
 */
 
@@ -63,8 +63,8 @@ function get_bricks_form_field_labels($post_id, $form_id)
     return $field_labels;
 }
 
-// Function to fetch Bricks data by form ID
-function fetch_bricks_data($form_id, $limit = false)
+// Function to fetch Bricks data by form ID with optional date filtering
+function fetch_bricks_data($form_id, $limit = false, $start_date = false)
 {
     log_bricks_export("Fetching data for form ID: $form_id with limit: " . ($limit ? $limit : 'no limit'));
 
@@ -82,6 +82,14 @@ function fetch_bricks_data($form_id, $limit = false)
     log_bricks_export("Querying the database with arguments: " . print_r($args, true));
     $entries = \Bricks\Integrations\Form\Submission_Database::get_entries($args);
 
+    // Filter entries by start_date if provided
+    if ($start_date) {
+        $entries = array_filter($entries, function($entry) use ($start_date) {
+            $entry_time = is_numeric($entry['created_at']) ? $entry['created_at'] : strtotime($entry['created_at']);
+            return $entry_time >= $start_date;
+        });
+    }
+
     if (empty($entries)) {
         log_bricks_export("No entries found for form ID: $form_id");
         return $forms_data;
@@ -89,9 +97,9 @@ function fetch_bricks_data($form_id, $limit = false)
 
     log_bricks_export("Number of entries found: " . count($entries));
 
-    // Fetch the field labels using the first entry's post_id (assuming all entries belong to the same form setup)
+    // Fetch the field labels using the first entry's post_id
     $first_entry = reset($entries);
-    $post_id = $first_entry['post_id']; // Assuming 'post_id' is available in your entries
+    $post_id = $first_entry['post_id'];
     $field_labels = get_bricks_form_field_labels($post_id, $form_id);
 
     foreach ($entries as $entry) {
@@ -123,18 +131,18 @@ function fetch_bricks_data($form_id, $limit = false)
     return $forms_data;
 }
 
-// Function to export Bricks data to CSV with correct headers
-function export_bricks_data_to_csv($form_id, $count, $limit = false)
+// Function to export Bricks data to CSV with correct headers and optional date filtering
+function export_bricks_data_to_csv($form_id, $count, $limit = false, $start_date = false)
 {
     log_bricks_export("Exporting data to CSV for form ID: $form_id with limit: " . ($limit ? $limit : 'no limit'));
-    $entries = fetch_bricks_data($form_id, $limit);
+    $entries = fetch_bricks_data($form_id, $limit, $start_date);
     if (empty($entries)) {
         log_bricks_export("No entries to export for form ID: $form_id");
         return false;
     }
 
     $form_title = get_bricks_form_title($form_id);
-    $csv_file = plugin_dir_path(__FILE__) . "bricks_submissions_{$form_title}_{$count}.csv";  // Use the count in the filename
+    $csv_file = plugin_dir_path(__FILE__) . "bricks_submissions_{$form_title}_{$count}.csv";
     $file_handle = fopen($csv_file, 'w');
 
     // Prepare headers from the first entry
@@ -147,7 +155,7 @@ function export_bricks_data_to_csv($form_id, $count, $limit = false)
     foreach ($entries as $entry) {
         $row = [];
         foreach ($headers as $header) {
-            $row[] = $entry[$header] ?? '';  // Use the header to map the data correctly
+            $row[] = isset($entry[$header]) ? $entry[$header] : '';
         }
         fputcsv($file_handle, $row);
     }
@@ -158,8 +166,8 @@ function export_bricks_data_to_csv($form_id, $count, $limit = false)
     return $csv_file;
 }
 
-// Function to send email with Bricks CSV attachment
-function send_bricks_email($limit = false)
+// Function to send email with Bricks CSV attachment, with optional frequency override for testing
+function send_bricks_email($test_frequency = null)
 {
     log_bricks_export("Bricks email event triggered.");
 
@@ -171,9 +179,28 @@ function send_bricks_email($limit = false)
     }
 
     $frequency = isset($options['schedule_frequency']) ? $options['schedule_frequency'] : 'monthly';
+    if ($test_frequency !== null) {
+        $frequency = $test_frequency;
+    }
+
     $site_name = get_bloginfo('name');
     $subject = ucfirst($frequency) . " Form Submissions for $site_name";
-    $body = "Here's a $frequency update on the form submissions for $site_name:<br><br>";
+    $body = "Here's a " . $frequency . " update on the form submissions for $site_name:<br><br>";
+
+    // Calculate the start date based on frequency
+    switch ($frequency) {
+        case 'daily':
+            $start_date = strtotime('-1 day');
+            break;
+        case 'weekly':
+            $start_date = strtotime('-1 week');
+            break;
+        case 'monthly':
+            $start_date = strtotime('-1 month');
+            break;
+        default:
+            $start_date = false;
+    }
 
     log_bricks_export("Fetching form data to include in the email.");
     $available_form_ids = get_available_form_ids();
@@ -187,24 +214,24 @@ function send_bricks_email($limit = false)
     $body .= "<tr><th style='text-align: left;'>Form Name</th><th style='text-align: left;'>Number of " . ucfirst($frequency) . " Submissions</th></tr>";
 
     $attachments = [];
-    $count = 1;  // Initialize the counter
+    $count = 1;
 
     foreach ($available_form_ids as $form_id) {
-        $entries = fetch_bricks_data($form_id, $limit);
+        $entries = fetch_bricks_data($form_id, false, $start_date);
         $form_title = get_bricks_form_title($form_id);
         $form_submissions = count($entries);
         $total_submissions += $form_submissions;
         $body .= "<tr><td style='text-align: left;'>$form_title</td><td style='text-align: left;'>$form_submissions</td></tr>";
 
         // Generate CSV for each form with the count appended
-        $attachment = export_bricks_data_to_csv($form_id, $count, $limit);
+        $attachment = export_bricks_data_to_csv($form_id, $count, false, $start_date);
         if ($attachment) {
             $attachments[] = $attachment;
         }
-        $count++;  // Increment the counter
+        $count++;
     }
 
-    $body .= "<tr><th style='text-align: left;'>Total $frequency Submissions (All Forms)</th><th style='text-align: left;'>$total_submissions</th></tr>";
+    $body .= "<tr><th style='text-align: left;'>Total " . ucfirst($frequency) . " Submissions (All Forms)</th><th style='text-align: left;'>$total_submissions</th></tr>";
     $body .= "</table><br><br>";
 
     $test_email = isset($options['test_email']) ? $options['test_email'] : '';
@@ -271,7 +298,7 @@ function bricks_export_register_settings()
 }
 add_action('admin_init', 'bricks_export_register_settings');
 
-// Validate and sanitize settings
+// Validate and sanitize settings (Test Export Limit removed)
 function bricks_form_export_options_validate($input)
 {
     $output = [];
@@ -284,11 +311,6 @@ function bricks_form_export_options_validate($input)
     $output['test_email'] = sanitize_text_field($input['test_email']);
     if (empty($output['test_email'])) {
         $output['test_email'] = '';
-    }
-
-    $output['test_limit'] = intval($input['test_limit']);
-    if ($output['test_limit'] <= 0) {
-        $output['test_limit'] = 1;
     }
 
     $output['schedule_frequency'] = sanitize_text_field($input['schedule_frequency']);
@@ -353,8 +375,7 @@ function bricks_export_options_page_html()
         delete_option('bricks_form_export_options');
         $message = '<div class="updated"><p>All options have been cleared.</p></div>';
     }
-
-?>
+    ?>
     <div class="wrap">
         <h1>Automated Bricks Form Export Settings</h1>
         <?php if ($message) echo $message; ?>
@@ -372,10 +393,6 @@ function bricks_export_options_page_html()
                 <tr valign="top">
                     <th scope="row">Admin & Test Email Address</th>
                     <td><input type="text" name="bricks_form_export_options[test_email]" value="<?php echo isset($options['test_email']) ? esc_attr($options['test_email']) : ''; ?>" /></td>
-                </tr>
-                <tr valign="top">
-                    <th scope="row">Test Export Limit</th>
-                    <td><input type="number" name="bricks_form_export_options[test_limit]" value="<?php echo isset($options['test_limit']) ? esc_attr($options['test_limit']) : 1; ?>" /></td>
                 </tr>
                 <tr valign="top">
                     <th scope="row">Schedule Frequency</th>
@@ -414,9 +431,8 @@ function bricks_export_options_page_html()
         document.getElementById('bricks_form_export_settings_form').onsubmit = function() {
             var exportEmails = document.querySelector('[name="bricks_form_export_options[export_emails]"]').value;
             var testEmail = document.querySelector('[name="bricks_form_export_options[test_email]"]').value;
-            var testLimit = document.querySelector('[name="bricks_form_export_options[test_limit]"]').value;
 
-            if (!exportEmails || !testEmail || !testLimit) {
+            if (!exportEmails || !testEmail) {
                 alert('Please fill out all fields before saving.');
                 return false;
             }
@@ -424,32 +440,38 @@ function bricks_export_options_page_html()
             return true;
         };
     </script>
-<?php
+    <?php
 }
 
-// Add test email button in admin interface
+// Add test email page in admin interface with separate buttons for each frequency
 function test_email_button_callback()
 {
     $options = get_option('bricks_form_export_options');
     $test_email = isset($options['test_email']) ? $options['test_email'] : '';
-    $test_limit = isset($options['test_limit']) ? $options['test_limit'] : 1;
 
     if (empty($test_email)) {
         echo '<div class="notice notice-error"><p>Error: No test email address provided.</p></div>';
         return;
     }
 
-    if (isset($_POST['send_test_email'])) {
-        send_bricks_email($test_limit);
-        echo '<div class="updated"><p>Test email with the most recent submission(s) sent successfully to ' . esc_html($test_email) . '!</p></div>';
+    if (isset($_POST['send_test_daily'])) {
+        send_bricks_email('daily');
+        echo '<div class="updated"><p>Daily test email sent successfully to ' . esc_html($test_email) . '!</p></div>';
+    } elseif (isset($_POST['send_test_weekly'])) {
+        send_bricks_email('weekly');
+        echo '<div class="updated"><p>Weekly test email sent successfully to ' . esc_html($test_email) . '!</p></div>';
+    } elseif (isset($_POST['send_test_monthly'])) {
+        send_bricks_email('monthly');
+        echo '<div class="updated"><p>Monthly test email sent successfully to ' . esc_html($test_email) . '!</p></div>';
     }
 
     echo '<div class="wrap">';
     echo '<h2>Send Test Bricks Export Email</h2>';
-    echo '<p>The button below will send a test email to ' . esc_html($test_email) . ' with the most recent submission(s).</p>';
+    echo '<p>The buttons below will send a test email to ' . esc_html($test_email) . ' with the most recent submissions for the selected frequency.</p>';
     echo '<form method="post">';
-    echo '<input type="hidden" name="send_test_email" value="true">';
-    submit_button('Send Test Email');
+    echo '<input type="submit" name="send_test_daily" value="Send Daily Test Email" class="button button-primary" /> ';
+    echo '<input type="submit" name="send_test_weekly" value="Send Weekly Test Email" class="button button-primary" /> ';
+    echo '<input type="submit" name="send_test_monthly" value="Send Monthly Test Email" class="button button-primary" />';
     echo '</form>';
     echo '</div>';
 }
